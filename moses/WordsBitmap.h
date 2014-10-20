@@ -31,6 +31,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include "TypeDef.h"
 #include "WordsRange.h"
 
+#define CACHE_LEN 64
+
 namespace Moses
 {
 typedef unsigned long WordsBitmapID;
@@ -43,6 +45,7 @@ class WordsBitmap
 protected:
   const size_t m_size; /**< number of words in sentence */
   bool	*m_bitmap;	/**< ticks of words that have been done */
+  uint64_t m_fast_cache;
 
   WordsBitmap(); // not implemented
 
@@ -66,19 +69,20 @@ protected:
 public:
   //! create WordsBitmap of length size and initialise with vector
   WordsBitmap(size_t size, std::vector<bool> initialize_vector)
-    :m_size	(size) {
+    :m_size	(size), m_fast_cache (0) {
     m_bitmap = (bool*) malloc(sizeof(bool) * size);
     Initialize(initialize_vector);
   }
   //! create WordsBitmap of length size and initialise
   WordsBitmap(size_t size)
-    :m_size	(size) {
+    :m_size	(size), m_fast_cache (0) {
     m_bitmap = (bool*) malloc(sizeof(bool) * size);
     Initialize();
   }
   //! deep copy
   WordsBitmap(const WordsBitmap &copy)
     :m_size	(copy.m_size) {
+    m_fast_cache = copy.m_fast_cache;
     m_bitmap = (bool*) malloc(sizeof(bool) * m_size);
     for (size_t pos = 0 ; pos < copy.m_size ; pos++) {
       m_bitmap[pos] = copy.GetValue(pos);
@@ -89,6 +93,9 @@ public:
   }
   //! count of words translated
   size_t GetNumWordsCovered() const {
+    if (m_size < CACHE_LEN)
+      return __builtin_popcount (m_fast_cache);
+
     size_t count = 0;
     for (size_t pos = 0 ; pos < m_size ; pos++) {
       if (m_bitmap[pos])
@@ -99,6 +106,10 @@ public:
 
   //! position of 1st word not yet translated, or NOT_FOUND if everything already translated
   size_t GetFirstGapPos() const {
+    int first = __builtin_clz (m_fast_cache >> 32);
+    if (first < 32)
+      return (size_t)first;
+
     for (size_t pos = 0 ; pos < m_size ; pos++) {
       if (!m_bitmap[pos]) {
         return pos;
@@ -141,11 +152,17 @@ public:
   //! set value at a particular position
   void SetValue( size_t pos, bool value ) {
     m_bitmap[pos] = value;
+
+    if (pos < CACHE_LEN)
+      m_fast_cache ^= (-value ^ m_fast_cache) & (1ul << pos);
   }
   //! set value between 2 positions, inclusive
   void SetValue( size_t startPos, size_t endPos, bool value ) {
     for(size_t pos = startPos ; pos <= endPos ; pos++) {
       m_bitmap[pos] = value;
+
+      if (pos < CACHE_LEN)
+        m_fast_cache ^= (-value ^ m_fast_cache) & (1ul << pos);
     }
   }
   //! whether every word has been translated
