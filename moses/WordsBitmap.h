@@ -33,6 +33,15 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
 #define CACHE_LEN 64
 
+static void my_assert (bool condition)
+{
+  if (!condition)
+  {
+    fprintf (stderr, "blbe!\n");
+    exit (123);
+  }
+}
+
 namespace Moses
 {
 typedef unsigned long WordsBitmapID;
@@ -93,8 +102,23 @@ public:
   }
   //! count of words translated
   size_t GetNumWordsCovered() const {
+    // TODO
+    return GetNumWordsCoveredFast ();
+
+    size_t count = 0;
+    for (size_t pos = 0 ; pos < m_size ; pos++) {
+      if (m_bitmap[pos])
+        count++;
+    }
+
+    my_assert (count == GetNumWordsCoveredFast ());
+
+    return count;
+  }
+
+  size_t GetNumWordsCoveredFast() const {
     if (m_size < CACHE_LEN)
-      return __builtin_popcount (m_fast_cache);
+      return __builtin_popcount (m_fast_cache) + __builtin_popcount (m_fast_cache >> 32);
 
     size_t count = 0;
     for (size_t pos = 0 ; pos < m_size ; pos++) {
@@ -104,10 +128,26 @@ public:
     return count;
   }
 
+
   //! position of 1st word not yet translated, or NOT_FOUND if everything already translated
   size_t GetFirstGapPos() const {
-    int first = __builtin_clz (m_fast_cache >> 32);
-    if (first < 32)
+    // TODO
+    return GetFirstGapPosFast ();
+
+    for (size_t pos = 0 ; pos < m_size ; pos++) {
+      if (!m_bitmap[pos]) {
+	my_assert (pos == GetFirstGapPosFast());
+        return pos;
+      }
+    }
+    // no starting pos
+    my_assert (GetFirstGapPosFast () == NOT_FOUND);
+    return NOT_FOUND;
+  }
+
+  size_t GetFirstGapPosFast () const {
+    int first = __builtin_ctz (~m_fast_cache);
+    if (first < 32 && first < m_size)
       return (size_t)first;
 
     for (size_t pos = 0 ; pos < m_size ; pos++) {
@@ -118,7 +158,6 @@ public:
     // no starting pos
     return NOT_FOUND;
   }
-
 
   //! position of last word not yet translated, or NOT_FOUND if everything already translated
   size_t GetLastGapPos() const {
